@@ -18,6 +18,8 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED   = (255, 0, 0)
 GREEN = (0, 255, 0)
+GRAY = (100, 100, 100)
+BROWN = (139, 69, 19)
 
 TIME_LIMIT = 300  # 5 minutes in seconds
 DAMAGE_COOLDOWN_MS = 500  # minimum time between enemy hits
@@ -26,18 +28,34 @@ HEALTH_DRAIN_PERIOD = 10  # seconds
 # =========================
 # Items
 # =========================
+def get_emoji_font(font_size):
+    # Try emoji fonts, fallback to Arial
+    for font_name in ["Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "arial"]:
+        try:
+            font = pygame.font.SysFont(font_name, font_size)
+            # Test rendering an emoji
+            if font.render('💎', True, (255,255,255)).get_width() > 0:
+                return font
+        except Exception:
+            continue
+    return pygame.font.SysFont("arial", font_size)
+
+def load_sprite(filename):
+    path = os.path.join(os.path.dirname(__file__), "assets", filename)
+    img = pygame.image.load(path).convert_alpha()
+    return pygame.transform.scale(img, (TILE_SIZE, TILE_SIZE))
+
 class Item(pygame.sprite.Sprite):
     """Base class for all collectible items."""
     def __init__(self, x, y, item_type):
         super().__init__()
         self.type = item_type
-        self.image = pygame.Surface((TILE_SIZE, TILE_SIZE))
-        if item_type == 'potion':
-            self.image.fill(GREEN)
-        elif item_type == 'key':
-            self.image.fill((255, 215, 0))  # Gold
-        elif item_type == 'treasure':
-            self.image.fill((255, 255, 0))  # Yellow
+        sprite_map = {
+            'potion': "potion.png",
+            'key': "key.png",
+            'treasure': "treasure.png"
+        }
+        self.image = load_sprite(sprite_map[item_type])
         self.rect = self.image.get_rect(topleft=(x * TILE_SIZE, y * TILE_SIZE))
 
 class Potion(Item):
@@ -67,8 +85,7 @@ class Player(pygame.sprite.Sprite):
     """Controllable player character."""
     def __init__(self, x, y):
         super().__init__()
-        self.image = pygame.Surface((TILE_SIZE, TILE_SIZE))
-        self.image.fill((0, 0, 255))  # Blue
+        self.image = load_sprite("player.png")
         self.rect = self.image.get_rect(topleft=(x * TILE_SIZE, y * TILE_SIZE))
         self.health = 100
         self.inventory = []
@@ -117,8 +134,7 @@ class Enemy(pygame.sprite.Sprite):
     """Simple patrolling enemy with random movement."""
     def __init__(self, x, y):
         super().__init__()
-        self.image = pygame.Surface((TILE_SIZE, TILE_SIZE))
-        self.image.fill(RED)
+        self.image = load_sprite("enemy.png")
         self.rect = self.image.get_rect(topleft=(x * TILE_SIZE, y * TILE_SIZE))
 
     def patrol(self, level):
@@ -172,18 +188,14 @@ class Level:
         return False
 
     def draw(self, screen):
+        wall_img = load_sprite("wall.png")
+        door_img = load_sprite("door.png")
         for y in range(LEVEL_HEIGHT):
             for x in range(LEVEL_WIDTH):
                 if self.map[y][x] == 1:
-                    pygame.draw.rect(
-                        screen, (100, 100, 100),
-                        (x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-                    )
+                    screen.blit(wall_img, (x * TILE_SIZE, y * TILE_SIZE))
                 elif self.map[y][x] == 2:
-                    pygame.draw.rect(
-                        screen, (139, 69, 19),
-                        (x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-                    )
+                    screen.blit(door_img, (x * TILE_SIZE, y * TILE_SIZE))
 
 # =========================
 # Game
@@ -195,7 +207,7 @@ class Game:
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Treasure Hunter Quest")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont(None, 30)
+        self.font = pygame.font.SysFont('arial', 24, bold=True)
         self.running = True
         self.state = "playing"  # playing | win | lose
 
@@ -314,33 +326,52 @@ class Game:
         self.level.draw(self.screen)
         self.all_sprites.draw(self.screen)
 
-        # UI
-        health_text = self.font.render(f"Health: {self.player.health}", True, WHITE)
-        self.screen.blit(health_text, (10, 10))
+        # Horizontal UI at the top
+        ui_y = 10
+        ui_spacing = 30
 
+        # Health: draw hearts
+        heart_img = load_sprite("heart.png")
+        for i in range(self.player.health // 20):  # 1 heart per 20 HP
+            self.screen.blit(heart_img, (10 + i * (heart_img.get_width() + 5), ui_y))
+
+        # Time: draw clock icon and time left
+        clock_img = load_sprite("clock.png")
         time_left = max(0, TIME_LIMIT - int(time.time() - self.start_time))
-        time_text = self.font.render(f"Time: {time_left}", True, WHITE)
-        self.screen.blit(time_text, (10, 40))
+        time_color = RED if time_left < 60 else WHITE
+        clock_x = 10 + 5 * (heart_img.get_width() + 5) + ui_spacing
+        self.screen.blit(clock_img, (clock_x, ui_y))
+        time_text = self.font.render(f"{time_left}s", True, time_color)
+        self.screen.blit(time_text, (clock_x + clock_img.get_width() + 5, ui_y))
 
-        inv_counts = {
-            'potion': sum(1 for i in self.player.inventory if i.type == 'potion'),
-            'key': self.player.keys,  # keys might be in inv or counted; we show count
-        }
-        inv_text = self.font.render(
-            f"Inventory: {len(self.player.inventory)} (Potions: {inv_counts['potion']}, Keys: {inv_counts['key']})",
-            True, WHITE
-        )
-        self.screen.blit(inv_text, (10, 70))
+        # Treasures: draw treasure icon and count
+        treasure_img = load_sprite("treasure.png")
+        treasure_x = clock_x + clock_img.get_width() + time_text.get_width() + ui_spacing + 10
+        self.screen.blit(treasure_img, (treasure_x, ui_y))
+        treasures_text = self.font.render(f"{self.player.treasures_collected}/3", True, WHITE)
+        self.screen.blit(treasures_text, (treasure_x + treasure_img.get_width() + 5, ui_y))
 
-        treasures_text = self.font.render(f"Treasures: {self.player.treasures_collected}/3", True, WHITE)
-        self.screen.blit(treasures_text, (10, 100))
-
+        # Game state messages
         if self.state == "win":
-            win_text = self.font.render("You Win! Press R to Restart", True, GREEN)
-            self.screen.blit(win_text, (SCREEN_WIDTH//2 - 170, SCREEN_HEIGHT//2))
+            win_text = self.font.render("*** YOU WIN! *** Press R to Restart", True, GREEN)
+            win_rect = win_text.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2))
+            bg_rect = win_rect.inflate(30, 20)
+            pygame.draw.rect(self.screen, BLACK, bg_rect)
+            pygame.draw.rect(self.screen, GREEN, bg_rect, 3)
+            self.screen.blit(win_text, win_rect)
         elif self.state == "lose":
-            lose_text = self.font.render("Game Over! Press R to Restart", True, RED)
-            self.screen.blit(lose_text, (SCREEN_WIDTH//2 - 190, SCREEN_HEIGHT//2))
+            lose_text = self.font.render("*** GAME OVER *** Press R to Restart", True, RED)
+            lose_rect = lose_text.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2))
+            bg_rect = lose_rect.inflate(30, 20)
+            pygame.draw.rect(self.screen, BLACK, bg_rect)
+            pygame.draw.rect(self.screen, RED, bg_rect, 3)
+            self.screen.blit(lose_text, lose_rect)
+
+        # Instructions at bottom
+        if self.state == "playing":
+            instructions = self.font.render("WASD to move, P to use potion", True, WHITE)
+            instructions_rect = instructions.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT - 30))
+            self.screen.blit(instructions, instructions_rect)
 
         pygame.display.flip()
 
@@ -357,7 +388,7 @@ class Game:
             with open(self.high_score_file, 'w') as f:
                 f.write(str(score))
 
-# =========================
+# ====================================
 # Unit Tests
 # =========================
 class TestGame(unittest.TestCase):
